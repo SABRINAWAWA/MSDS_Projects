@@ -1,0 +1,191 @@
+---
+title: "NYPD Shooting Incident Data Analysis"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+This data report aims to find out the trend and relationship of the number of victims and number of criminals for the past 21 years using the data set of NYPD Shooting Incident Data. The hypothesis is that the number of victims of the shooting incident in New York gradually decreased for the past 21 years, and the number of arrested criminals increased for the past 21 years.
+
+## Import Data
+First Step: importing NYPD Shooting Incident Data from an online resource, "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD".
+```{r get_raw_data} 
+raw_data <-"https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+
+```{r import_data, message=FALSE} 
+shooting_data <-readr:::read_csv(raw_data)
+```
+
+## Clearing Data
+Second step: I cleared data for analyzing data of shooting incidents in New York in the past 21 years. The data columns I need for this analysis are "OCCUR_DATE","OCCUR_TIME","BORO","PERP_AGE_GROUP","PERP_SEX", "PERP_RACE", "VIC_AGE_GROUP", "VIC_SEX", "VIC_RACE".
+
+* The data type of "OCCUR_DATE" is "character." To better sort this data set, I changed its data type to "DATE."
+
+* I only want to study the shooting incident for the past 21 years, so I filtered data, which its "OCCUR_DATE" is between "2000-01-01" and "2020-12-30".
+
+* Also, to clear out the invalid data, I filtered the rows that contain the NULL VIC_AGE_GROUP, VIC_SEX, and VIC_RACE. 
+
+```{r tidy_shooting_data} 
+shooting_data<-shooting_data %>%   
+  select("OCCUR_DATE","OCCUR_TIME","BORO","PERP_AGE_GROUP","PERP_SEX", "PERP_RACE", "VIC_AGE_GROUP", "VIC_SEX", "VIC_RACE")
+```
+
+```{r clear_shooting_data} 
+shooting<-shooting_data %>%   
+  mutate(OCCUR_DATE=mdy(OCCUR_DATE))%>%   
+  filter(OCCUR_DATE >= ymd("2000-01-01")&OCCUR_DATE <= ymd("2020-12-30"))%>%   
+  filter(VIC_AGE_GROUP!="NA"& VIC_SEX!="NA"& VIC_RACE!="NA" )
+```
+
+## Transforming Data
+Third step: I transformed data in order to better study the shooting data. 
+* To better count the number of victim, I first added the number of victim (1) as "countVit" for each record.
+
+* To have a general view of shooting data, I created "shooting_per_month", which summarizes the total shooting incident of each month for the past 21 years.
+
+* To compare shooting data among different years, I created "shooting_per_year", which summarizes the total shooting incident, total escaped criminal, and total criminal caught. 
+
+* "shooting_per_Year_per_AgeGroup" is created by grouping the month, year, and age group of victim.
+
+* "shooting_compare" is created by combining the "shooting_NA_prep" table, which summarizes the total escaped criminal, and the "shooting_per_year", which summarizes total criminal caught.
+
+```{r transform_shooting_data} 
+shooting_modify<-shooting%>% 
+  mutate(countVit=1)
+
+shooting_per_month<-shooting_modify%>% 
+  mutate( year = format(OCCUR_DATE, "%Y"), month = format(OCCUR_DATE, "%m")) %>% 
+  group_by(year, month) %>% 
+  summarise(total_shooting=sum(countVit))
+
+shooting_per_month<-shooting_per_month%>% 
+  unite("month_year", c(year,month), sep=",", na.rm=TRUE, remove=FALSE)
+
+shooting_per_year<-shooting_modify%>% 
+  mutate( year = format(OCCUR_DATE, "%Y")) %>% 
+  group_by(year) %>% 
+  summarise(total_shooting=sum(countVit))
+
+shooting_NA_prep<-shooting_modify%>% 
+  filter(PERP_AGE_GROUP!="NA")%>% 
+  mutate(year = format(OCCUR_DATE, "%Y")) %>% 
+  group_by(year) %>% 
+  summarise(total_escaped_criminal=sum(countVit))
+
+shooting_per_Year_per_AgeGroup<-shooting_modify%>% 
+  mutate( year = format(OCCUR_DATE, "%Y"), month = format(OCCUR_DATE, "%m")) %>% 
+  group_by(year, month, VIC_AGE_GROUP) %>% 
+  summarise(total_shooting=sum(countVit))
+
+shooting_compare<-shooting_NA_prep%>% 
+  left_join(shooting_per_year, by=c("year"))%>% 
+  mutate(shooting_criminal_caught=total_shooting-total_escaped_criminal)
+```
+
+
+## Plots
+The first plot shows the total shooting incident per month from the year 2000 to 2021. 
+* The first plot shows that the number of shooting incidents in New York decreases from January to December every year.
+The second plot shows the total escaped criminal, total arrested criminal, and total_shooting from the year 2000 to 2021. 
+* The second plot shows that the general trends of the total number of shooting incidents and the total number of escaped criminals are decreasing from the year 2000 to 2019. 
+
+* The second plot also shows that the total number of arrested criminals increases from the year 2000 to 2011 but gradually decreases from the year 2012 to 2019. The decreasing trend of the number of arrested criminals may be caused by the decreased number of shooting incidents. 
+
+* The total number of arrested criminals, the total number of shooting incidents and the total number of escaped criminals of the year 2020 are outliers of the second plot.
+```{r vistualizing_data}
+shooting_per_month%>%
+  filter(total_shooting>0) %>%
+  ggplot(aes(x=month_year, y=total_shooting)) +
+  geom_line(aes(color="total_shooting"))+
+  geom_point(aes(color="total_shooting"))+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  labs(title = "Total Number of Shooting per Month in New York", y="Number of Shooting Incident")
+
+
+shooting_compare%>%
+  filter(total_shooting>0) %>%
+  ggplot(aes(x=year, y=total_shooting)) +
+  geom_line(aes(color="total_shooting"))+
+  geom_point(aes(color="total_shooting"))+
+  geom_line(aes(y=total_escaped_criminal,color="total_escaped_criminal"))+
+  geom_point(aes(y=total_escaped_criminal,color="total_escaped_criminal"))+
+  geom_line(aes(y=shooting_criminal_caught,color="shooting_criminal_caught"))+
+  geom_point(aes(y=shooting_criminal_caught,color="shooting_criminal_caught"))+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  labs(title = "Number of Shooting Incident in New York", y="Number of Shooting Incident")
+```
+
+
+## Analyzing Data
+The groups of people who are most often being shot are male African Americans, age 18-44. 
+```{r analyzing_data_vic} 
+number_vic<-shooting%>%   
+  count(VIC_AGE_GROUP,VIC_SEX, VIC_RACE, sort = TRUE) 
+number_vic
+```
+The maximum number of criminal's age_group is 8421. The criminal group of males, African Americans, age 18-44 created about 50% of the shooting incidents for the past 21 years.
+```{r analyzing_data_pert} 
+number_pert<-shooting%>%   
+  count(PERP_AGE_GROUP,PERP_SEX,PERP_RACE, sort = TRUE) 
+
+number_pert 
+```
+The area, where shooting incidents most often happened in New York, is Brooklyn. The number of shooting incident happened in Brooklyn occupies 41% of the overall shooting incident for the past 21 years.
+```{r analyzing_data_area} 
+number_shooting_per_area<-shooting%>%   
+  count(BORO, sort = TRUE) 
+number_shooting_per_area
+```
+
+In Brooklyn district, New York, there are 3968 escape criminals, and the top characteristics of the main criminal group are male, age 15-44, African American. 
+```{r analyzing_brooklyn} 
+number_shooting_in_brooklyn<-shooting%>%    
+  filter(BORO=="BROOKLYN")%>%   
+  count(BORO,PERP_AGE_GROUP,PERP_SEX,PERP_RACE, sort = TRUE) 
+number_shooting_in_brooklyn
+```
+
+
+## Modeling Data 
+I used a linear model to fit the total shooting criminal and the total escaped criminal.
+In summary of this linear model, we know that shooting_criminal_caught=-0.3351*total_escaped_criminal+901.22.
+```{r modeling_data} 
+mod<-lm(shooting_criminal_caught~total_escaped_criminal, data=shooting_compare) 
+summary(mod)
+
+shooting_compare_pred<-shooting_compare%>% mutate(pred=predict(mod))
+```
+
+```{r modeling_data_ploting}
+shooting_compare_pred%>%
+  filter(total_shooting>0) %>%
+  ggplot() +
+  geom_point(aes(x=total_escaped_criminal, y=shooting_criminal_caught), color="blue")+
+  geom_point(aes(x=total_escaped_criminal, y=pred), color="red")+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  labs(title = "Number of Shooting Incident in New York Data VS. Prediation")
+```
+
+# Conclusion
+According to the plot, this model is not good to predict shooting_criminal_caught when the total_escaped_criminal is smaller than 1500. This model shows that there are other factors that influence the shooting_criminal_caught and total_escaped_criminal. Even though previous plots show that the number of victims of the shooting incident in New York gradually decreased for the past 21 years, and the number of arrested criminals increased for the past 21 years, there are not enough evidences to prove the relationship between the relationship of the number of victims and number of criminals for the past 21 years.
+
+# Bias Interpration
+The possible bias sources in this report are:
+
+* This set of data may include data produced by humans which may contain bias against groups of people.
+
+* Because this shooting incident data does not include variables that properly capture the phenomenon I want to predict, it may results in selection bias while doing data clearing and transforming. 
+
+* Last bias may be omitted variable bias because while clearing data, I only select few columns, it may cause the critical attributes that influence the outcome to be missing during analysis.
